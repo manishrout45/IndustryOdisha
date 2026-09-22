@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-surface text-ink font-sans antialiased;
+  }
+}
+
+@layer components {
+  .cms-card {
+    @apply bg-white rounded-xl border border-slate-200/80 shadow-card;
+  }
+
+  .cms-btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition disabled:opacity-50;
+  }
+
+  .cms-btn-primary {
+    @apply cms-btn bg-ink text-white hover:bg-ink-soft;
+  }
+
+  .cms-btn-accent {
+    @apply cms-btn bg-accent text-white hover:bg-accent-soft;
+  }
+
+  .cms-btn-ghost {
+    @apply cms-btn bg-slate-100 text-ink hover:bg-slate-200;
+  }
+
+  .cms-btn-danger {
+    @apply cms-btn bg-red-50 text-red-700 hover:bg-red-100;
+  }
+
+  .cms-input {
+    @apply w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-ink focus:ring-2 focus:ring-ink/10;
+  }
+
+  .cms-label {
+    @apply mb-1.5 block text-sm font-semibold text-slate-700;
+  }
+
+  .cms-table-wrap {
+    @apply cms-card overflow-hidden;
+  }
+
+  .cms-table {
+    @apply w-full text-sm;
+  }
+
+  .cms-table thead {
+    @apply bg-slate-50 text-left text-xs uppercase tracking-wider text-ink-muted;
+  }
+
+  .cms-table th {
+    @apply px-4 py-3 font-semibold;
+  }
+
+  .cms-table td {
+    @apply px-4 py-3 border-t border-slate-100 align-middle;
+  }
+}
+
+.ProseMirror {
+  min-height: 420px;
+  padding: 1.25rem;
+  outline: none;
+  line-height: 1.8;
+}
+
+.ProseMirror ul {
+  list-style: disc;
+  padding-left: 1.5rem;
+}
+
+.ProseMirror ol {
+  list-style: decimal;
+  padding-left: 1.5rem;
+}
+
+.ProseMirror a {
+  color: #c62828;
+  text-decoration: underline;
+}
+
+.ProseMirror img {
+  max-width: 100%;
+  border-radius: 0.5rem;
+}

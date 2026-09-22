@@ -1,0 +1,37 @@
+{
+  "name": "news-portal-api",
+  "version": "1.0.0",
+  "description": "MERN News Portal API",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "seed": "node src/seeds/index.js",
+    "test:mysql": "node src/scripts/testMysqlConnection.js",
+    "test:mysql-content": "node src/scripts/testMysqlContent.js"
+  },
+  "keywords": [
+    "news",
+    "mern",
+    "api"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cloudinary": "^2.10.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-validator": "^7.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^9.7.0",
+    "multer": "^2.2.0",
+    "mysql2": "^3.24.4",
+    "nodemailer": "^10.0.1",
+    "slugify": "^1.6.6",
+    "wordpress-hash-node": "^1.0.0"
+  }
+}

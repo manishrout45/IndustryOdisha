@@ -1,0 +1,14 @@
+version: "3.9"
+
+services:
+  frontend:
+    build:
+      context: ../../frontend/public-website
+      dockerfile: ../../infrastructure/docker/Dockerfile.frontend
+    restart: always
+
+  backend:
+    build:
+      context: ../../backend
+      dockerfile: ../../infrastructure/docker/Dockerfile.backend
+    restart: always

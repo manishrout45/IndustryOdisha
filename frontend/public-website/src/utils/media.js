@@ -1,5 +1,5 @@
 const API_ROOT = (
-  import.meta.env.VITE_API_URL || "http://localhost:5000/api/public"
+  import.meta.env.VITE_API_URL || ""
 ).replace(/\/api\/public\/?$/, "");
 
 export function getImageUrl(path, fallback = "https://placehold.co/800x500?text=News") {

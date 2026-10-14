@@ -1,3 +1,6 @@
+const API_ORIGIN =
+  typeof window !== "undefined" ? window.location.origin : "";
+
 export function getImageUrl(
   image,
   fallback = "https://placehold.co/160x100?text=No+Image"
@@ -6,7 +9,7 @@ export function getImageUrl(
   if (typeof image !== "string") return fallback;
   if (image.startsWith("http") || image.startsWith("data:")) return image;
   const path = image.startsWith("/") ? image : `/${image}`;
-  return `http://localhost:5000${path}`;
+  return `${API_ORIGIN}${path}`;
 }
 
 export function formatShortDate(value) {

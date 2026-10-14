@@ -25,14 +25,13 @@ const mapWpPostToArticle = (row, extras = {}) => {
     (row.post_excerpt && String(row.post_excerpt).trim()) ||
     stripHtml(row.post_content, 280);
 
-  return {
+  const article = {
     _id: id,
     id,
     wpPostId: Number(row.ID),
     title: row.post_title || 'Untitled',
     slug: row.post_name || id,
     excerpt,
-    content: row.post_content || '',
     featuredImage: extras.featuredImage || '',
     author,
     category: categories[0] || null,
@@ -49,6 +48,13 @@ const mapWpPostToArticle = (row, extras = {}) => {
     seo: extras.seo || {},
     source: 'wordpress-mysql',
   };
+
+  // Full HTML only when needed (article detail). List/homepage stay lean.
+  if (!extras.lean) {
+    article.content = row.post_content || '';
+  }
+
+  return article;
 };
 
 module.exports = {

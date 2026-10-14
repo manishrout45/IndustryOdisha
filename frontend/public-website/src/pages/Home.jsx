@@ -48,10 +48,10 @@ function sectionTitle(section) {
 
 function Home() {
   const [cmsSections, setCmsSections] = useState([]);
-  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
+
     getHomepage()
       .then((res) => {
         if (cancelled) return;
@@ -61,18 +61,15 @@ function Home() {
         setCmsSections(list);
       })
       .catch(() => {
-        if (!cancelled) setCmsSections([]);
-      })
-      .finally(() => {
-        if (!cancelled) setLoaded(true);
+        /* keep default layout — never block the page on CMS config */
       });
+
     return () => {
       cancelled = true;
     };
   }, []);
 
   const sections = useMemo(() => {
-    if (!loaded) return [];
     if (cmsSections.length) return cmsSections;
     return DEFAULT_ORDER.map((s, i) => ({
       ...s,
@@ -80,7 +77,7 @@ function Home() {
       order: i,
       isActive: true,
     }));
-  }, [cmsSections, loaded]);
+  }, [cmsSections]);
 
   const renderSection = (section) => {
     const key = section._id || `${section.type}-${section.order}`;
@@ -181,12 +178,7 @@ function Home() {
 
       <HomepageFeedProvider sections={sections}>
         <div className="max-w-site mx-auto px-4">
-          {!loaded ? (
-            <div className="py-16 text-center text-ink-muted text-sm">
-              Loading homepage…
-            </div>
-          ) : (
-            layoutBlocks.map((block, idx) => {
+          {layoutBlocks.map((block, idx) => {
               if (block.kind === "single") {
                 if (block.section.type === "breaking-news") return null;
                 return (
@@ -228,8 +220,7 @@ function Home() {
                   </aside>
                 </div>
               );
-            })
-          )}
+            })}
 
           <div className="my-8">
             <AdSlot position="homepage-bottom" size="banner" />

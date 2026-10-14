@@ -64,20 +64,22 @@ export function HomepageFeedProvider({ children, sections = [] }) {
     const load = async () => {
       try {
         setLoading(true);
-        const [featuredRes, trendingRes, dontMissRes, latestRes, mostReadRes] =
-          await Promise.all([
-            axiosInstance.get(`/featured-news?limit=${Math.max(heroLimit, 8)}`),
-            axiosInstance.get(`/trending-news?limit=${trendingLimit}`),
-            axiosInstance.get(`/dont-miss?limit=${Math.max(dontMissLimit, 8)}`),
-            axiosInstance.get(`/latest-news?limit=${Math.max(latestLimit, 24)}`),
-            axiosInstance.get(`/most-read?limit=${mostReadLimit}`),
-          ]);
+        const res = await axiosInstance.get("/homepage-feeds", {
+          params: {
+            featured: Math.max(heroLimit, 8),
+            trending: trendingLimit,
+            dontMiss: Math.max(dontMissLimit, 8),
+            latest: Math.max(latestLimit, 24),
+            mostRead: mostReadLimit,
+          },
+        });
+        const bundle = res.data?.data ?? res.data ?? {};
 
-        const featured = asList(featuredRes.data?.data ?? featuredRes.data);
-        const trending = asList(trendingRes.data?.data ?? trendingRes.data);
-        const dontMissRaw = asList(dontMissRes.data?.data ?? dontMissRes.data);
-        const latestRaw = asList(latestRes.data?.data ?? latestRes.data);
-        const mostReadRaw = asList(mostReadRes.data?.data ?? mostReadRes.data);
+        const featured = asList(bundle.featured);
+        const trending = asList(bundle.trending);
+        const dontMissRaw = asList(bundle.dontMiss);
+        const latestRaw = asList(bundle.latest);
+        const mostReadRaw = asList(bundle.mostRead);
 
         const topNews = takeUnique(featured, new Set(), heroLimit);
         const trendingNews = takeUnique(trending, new Set(), trendingLimit);

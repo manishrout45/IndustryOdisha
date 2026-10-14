@@ -1,26 +1,16 @@
 import axios from "axios";
 
-const API = axios.create({
-  baseURL: "http://localhost:5000/api",
-  withCredentials: true, // allow cookies
+const api = axios.create({
+  baseURL: import.meta.env.VITE_API_URL || "/api",
+  withCredentials: true,
 });
 
-API.interceptors.request.use((config) => {
-  const token = localStorage.getItem("authorToken");
-
-  // Only send a REAL JWT
-  if (
-    token &&
-    token !== "jwt-token" &&
-    token !== "undefined" &&
-    token !== "null"
-  ) {
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem("token");
+  if (token) {
     config.headers.Authorization = `Bearer ${token}`;
-  } else {
-    delete config.headers.Authorization;
   }
-
   return config;
 });
 
-export default API;
+export default api;

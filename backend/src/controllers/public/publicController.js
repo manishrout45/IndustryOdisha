@@ -89,6 +89,33 @@ const getMostReadNews = asyncHandler(async (req, res) => {
   res.status(200).json(new ApiResponse(200, articles));
 });
 
+/** One round-trip for homepage cards (faster over tunnels). */
+const getHomepageFeeds = asyncHandler(async (req, res) => {
+  const featuredLimit = parseInt(req.query.featured, 10) || 8;
+  const trendingLimit = parseInt(req.query.trending, 10) || 5;
+  const dontMissLimit = parseInt(req.query.dontMiss, 10) || 8;
+  const latestLimit = parseInt(req.query.latest, 10) || 24;
+  const mostReadLimit = parseInt(req.query.mostRead, 10) || 5;
+
+  const [featured, trending, dontMiss, latest, mostRead] = await Promise.all([
+    articleService.getFeaturedNews(featuredLimit),
+    articleService.getTrendingNews(trendingLimit),
+    articleService.getDontMissNews(dontMissLimit),
+    articleService.getLatestNews(latestLimit),
+    articleService.getMostReadNews(mostReadLimit),
+  ]);
+
+  res.status(200).json(
+    new ApiResponse(200, {
+      featured,
+      trending,
+      dontMiss,
+      latest,
+      mostRead,
+    })
+  );
+});
+
 const getVideos = asyncHandler(async (req, res) => {
   const { isMysqlContentMode } = require('../../config/dbMode');
   if (isMysqlContentMode()) {
@@ -135,12 +162,8 @@ const postComment = asyncHandler(async (req, res) => {
 });
 
 const getAds = asyncHandler(async (req, res) => {
-  const { isMysqlContentMode } = require('../../config/dbMode');
-  if (isMysqlContentMode()) {
-    return res.status(200).json(new ApiResponse(200, []));
-  }
-
   const ads = await adService.getActiveAds(req.query.position);
+
   res.status(200).json(new ApiResponse(200, ads));
 });
 
@@ -231,6 +254,7 @@ module.exports = {
   getDontMissNews,
   getFeaturedNews,
   getMostReadNews,
+  getHomepageFeeds,
   getVideos,
   getCategories,
   getCategory,

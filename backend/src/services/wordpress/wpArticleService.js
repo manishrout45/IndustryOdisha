@@ -17,6 +17,7 @@ const hydratePosts = async (rows, flags = {}) => {
 
   const ids = rows.map((r) => Number(r.ID));
   const authorIds = rows.map((r) => Number(r.post_author));
+  const lean = flags.lean !== false; // default lean for lists
 
   const [images, authors, categories, tags, views] = await Promise.all([
     getFeaturedImagesMap(ids),
@@ -29,6 +30,7 @@ const hydratePosts = async (rows, flags = {}) => {
   return rows.map((row) => {
     const id = Number(row.ID);
     return mapWpPostToArticle(row, {
+      lean,
       featuredImage: images.get(id) || '',
       author: authors.get(Number(row.post_author)),
       categories: categories.get(id) || [],
@@ -179,14 +181,14 @@ const getArticleBySlug = async (slug) => {
 
   if (!rows.length) throw new ApiError(404, 'Article not found');
 
-  const [article] = await hydratePosts(rows);
+  const [article] = await hydratePosts(rows, { lean: false });
   return article;
 };
 
 const getArticleById = async (id) => {
   const rows = await fetchPostsByIds([id], { anyStatus: true });
   if (!rows.length) throw new ApiError(404, 'Article not found');
-  const [article] = await hydratePosts(rows);
+  const [article] = await hydratePosts(rows, { lean: false });
   return article;
 };
 

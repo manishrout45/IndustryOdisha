@@ -187,11 +187,28 @@ const getPublicHomepage = async () => {
     }
 
     if (sections.length) {
-      return Promise.all(sections.map((s) => populateSectionArticles(s)));
+      // Lean payload for public site: order/visibility/config only.
+      // Article cards are loaded by separate public feed endpoints.
+      return sections.map((section) => {
+        const data =
+          typeof section.toObject === 'function'
+            ? section.toObject()
+            : { ...section };
+        data.articles = [];
+        return data;
+      });
     }
   }
 
-  return synthesizeDefaultPublicSections();
+  return DEFAULT_HOMEPAGE_SECTIONS.map((section) => ({
+    _id: `default-${section.type}`,
+    title: section.title,
+    type: section.type,
+    order: section.order,
+    isActive: true,
+    config: { ...section.config },
+    articles: [],
+  }));
 };
 
 const createSection = async (data, user) => {

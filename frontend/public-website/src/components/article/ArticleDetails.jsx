@@ -1,8 +1,11 @@
-import React from "react";
-import { Link } from "react-router-dom";
+import React, { useCallback, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import AuthorInfo from "./AuthorInfo";
 import ShareButtons from "./ShareButtons";
-import { getImageUrl, articlePath } from "../../utils/media";
+import ImageLightbox from "./ImageLightbox";
+import BrandLogoBadge from "../common/BrandLogoBadge";
+import { getImageUrl, articlePath, rewriteArticleHtml, toAppPath } from "../../utils/media";
+import ArticleEditLink from "./ArticleEditLink";
 
 function roleLabel(role) {
   if (role === "author") return "Correspondent";
@@ -11,9 +14,54 @@ function roleLabel(role) {
 }
 
 function ArticleDetails({ article, alsoRead }) {
+  const navigate = useNavigate();
+  const [lightbox, setLightbox] = useState(null);
+  const contentHtml = useMemo(
+    () => rewriteArticleHtml(article?.content || ""),
+    [article?.content]
+  );
+
+  const closeLightbox = useCallback(() => setLightbox(null), []);
+
+  const openImage = useCallback((src, alt) => {
+    if (!src) return;
+    setLightbox({ src, alt: String(alt || "").trim() });
+  }, []);
+
+  const handleProseClick = useCallback(
+    (event) => {
+      const anchor = event.target?.closest?.("a");
+      if (anchor && event.currentTarget.contains(anchor)) {
+        const modified =
+          event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+        if (!modified && anchor.target !== "_blank") {
+          const appPath = toAppPath(anchor.getAttribute("href") || "");
+          if (appPath) {
+            event.preventDefault();
+            navigate(appPath);
+            return;
+          }
+        }
+        return;
+      }
+
+      const img = event.target?.closest?.("img");
+      if (!img || !event.currentTarget.contains(img)) return;
+      event.preventDefault();
+      openImage(img.currentSrc || img.src, img.getAttribute("alt") || "");
+    },
+    [navigate, openImage]
+  );
+
   if (!article) return null;
 
   const image = article.featuredImage || article.image;
+  const featuredAlt =
+    article.featuredImageAlt ||
+    article.seo?.featuredAlt ||
+    article.imageCaption ||
+    article.title ||
+    "";
   const author = typeof article.author === "object" ? article.author : null;
   const authorName = author?.name || "Staff Reporter";
   const authorRole = roleLabel(author?.role);
@@ -32,10 +80,21 @@ function ArticleDetails({ article, alsoRead }) {
           <>
             <span className="text-slate-300 font-normal">/</span>
             <Link
-              to={`/category/${article.category.slug}`}
+              to={`/${article.category.slug}`}
               className="hover:text-accent transition"
             >
               {article.category.name}
+            </Link>
+          </>
+        ) : null}
+        {article.slug || article._id ? (
+          <>
+            <span className="text-slate-300 font-normal">/</span>
+            <Link
+              to={articlePath(article)}
+              className="hover:text-accent transition"
+            >
+              {article.slug || article._id}
             </Link>
           </>
         ) : null}
@@ -43,20 +102,32 @@ function ArticleDetails({ article, alsoRead }) {
 
       <header className="mb-6">
         {article.category?.name ? (
-          <Link
-            to={`/category/${article.category.slug}`}
-            className="inline-flex items-center gap-2 mb-3"
-          >
-            <span className="w-1 h-3.5 bg-accent" aria-hidden />
-            <span className="text-accent text-[11px] font-bold uppercase tracking-[0.18em]">
-              {article.category.name}
-            </span>
-          </Link>
+          article.category.slug ? (
+            <Link
+              to={`/${article.category.slug}`}
+              className="inline-flex items-center gap-2 mb-3"
+            >
+              <span className="w-1 h-3.5 bg-accent" aria-hidden />
+              <span className="text-accent text-[11px] font-bold uppercase tracking-[0.18em]">
+                {article.category.name}
+              </span>
+            </Link>
+          ) : (
+            <div className="inline-flex items-center gap-2 mb-3">
+              <span className="w-1 h-3.5 bg-accent" aria-hidden />
+              <span className="text-accent text-[11px] font-bold uppercase tracking-[0.18em]">
+                {article.category.name}
+              </span>
+            </div>
+          )
         ) : null}
 
-        <h1 className="font-display text-[1.65rem] sm:text-[2rem] lg:text-[2.25rem] font-bold text-ink leading-[1.2] tracking-[-0.015em]">
-          {article.title}
-        </h1>
+        <div className="flex items-start justify-between gap-3">
+          <h1 className="font-display text-[1.65rem] sm:text-[2rem] lg:text-[2.25rem] font-bold text-ink leading-[1.2] tracking-[-0.015em]">
+            {article.title}
+          </h1>
+          <ArticleEditLink article={article} className="mt-1 shrink-0" />
+        </div>
 
         {article.excerpt ? (
           <p className="mt-3.5 text-[0.95rem] sm:text-[1rem] leading-[1.55] text-ink-muted font-sans">
@@ -77,11 +148,8 @@ function ArticleDetails({ article, alsoRead }) {
                   </Link>
                 ))
               : null}
-            <span className="tabular-nums">
-              {Number(article.viewCount || 0).toLocaleString()} views
-            </span>
           </div>
-          <div className="shrink-0">
+          <div className="min-w-0">
             <ShareButtons title={article.title} />
           </div>
         </div>
@@ -89,15 +157,23 @@ function ArticleDetails({ article, alsoRead }) {
 
       {image ? (
         <figure className="mb-6">
-          <img
-            src={getImageUrl(image)}
-            alt={article.title}
-            className="w-full aspect-[16/9] max-h-[280px] sm:max-h-[380px] md:max-h-[480px] object-cover bg-slate-100"
-            onError={(e) => {
-              e.currentTarget.src =
-                "https://placehold.co/1200x675?text=Industry+Odisha";
-            }}
-          />
+          <button
+            type="button"
+            className="relative block w-full p-0 border-0 bg-transparent cursor-zoom-in overflow-hidden"
+            onClick={() => openImage(getImageUrl(image), featuredAlt)}
+            aria-label="View full image"
+          >
+            <img
+              src={getImageUrl(image)}
+              alt={featuredAlt || article.title}
+              className="w-full aspect-[16/9] max-h-[280px] sm:max-h-[380px] md:max-h-[480px] object-cover bg-slate-100 pointer-events-none"
+              onError={(e) => {
+                e.currentTarget.src =
+                  "https://placehold.co/1200x675?text=Industry+Odisha";
+              }}
+            />
+            <BrandLogoBadge size="lg" />
+          </button>
           {(article.imageCaption || article.category?.name) && (
             <figcaption className="mt-2 text-[11px] leading-snug text-ink-muted border-l-2 border-slate-300 pl-2.5">
               {article.imageCaption ||
@@ -109,7 +185,8 @@ function ArticleDetails({ article, alsoRead }) {
 
       <div
         className="article-prose article-prose--detail"
-        dangerouslySetInnerHTML={{ __html: article.content || "" }}
+        dangerouslySetInnerHTML={{ __html: contentHtml }}
+        onClick={handleProseClick}
       />
 
       {alsoRead ? (
@@ -119,15 +196,29 @@ function ArticleDetails({ article, alsoRead }) {
           </p>
           <Link
             to={articlePath(alsoRead)}
-            className="font-display text-base sm:text-lg font-bold text-ink leading-snug hover:text-accent transition block"
+            className="flex items-start gap-3 group"
           >
-            {alsoRead.title}
+            {alsoRead.featuredImage || alsoRead.image ? (
+              <img
+                src={getImageUrl(
+                  alsoRead.featuredImage || alsoRead.image,
+                  ""
+                )}
+                alt=""
+                className="h-16 w-24 sm:h-[4.5rem] sm:w-28 shrink-0 object-cover bg-slate-200"
+              />
+            ) : null}
+            <span className="min-w-0 flex-1">
+              <span className="font-display text-base sm:text-lg font-bold text-ink leading-snug group-hover:text-accent transition block">
+                {alsoRead.title}
+              </span>
+              {alsoRead.excerpt ? (
+                <span className="mt-1.5 text-[13px] text-ink-muted line-clamp-2 leading-relaxed block">
+                  {alsoRead.excerpt}
+                </span>
+              ) : null}
+            </span>
           </Link>
-          {alsoRead.excerpt ? (
-            <p className="mt-1.5 text-[13px] text-ink-muted line-clamp-2 leading-relaxed">
-              {alsoRead.excerpt}
-            </p>
-          ) : null}
         </aside>
       ) : null}
 
@@ -153,6 +244,8 @@ function ArticleDetails({ article, alsoRead }) {
       <div className="mt-8 p-4 sm:p-5 bg-white border border-slate-200">
         <AuthorInfo
           author={{
+            _id: author?._id || author?.id || "",
+            id: author?._id || author?.id || "",
             name: authorName,
             avatar: authorAvatar,
             bio: authorBio,
@@ -160,6 +253,12 @@ function ArticleDetails({ article, alsoRead }) {
           }}
         />
       </div>
+
+      <ImageLightbox
+        src={lightbox?.src}
+        alt={lightbox?.alt}
+        onClose={closeLightbox}
+      />
     </article>
   );
 }

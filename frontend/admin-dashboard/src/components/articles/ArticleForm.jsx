@@ -1,8 +1,69 @@
-﻿import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { Eye, X } from "lucide-react";
 import ArticleEditor from "./ArticleEditor";
+import AlsoReadPicker from "./AlsoReadPicker";
+import SeoPanel from "./SeoPanel";
 import { getCategories } from "../../services/categoryService";
 import { flattenCategories } from "../../utils/categories";
-import { getTags } from "../../services/tagService";
+import { createTag, getTags } from "../../services/tagService";
+import { getAuthors } from "../../services/authorService";
+import { formatDateTime, openPublicArticle } from "../../utils/media";
+import { toSlug } from "../../utils/seoAnalysis";
+
+function autoSaveStorageKey(articleId) {
+  return `io-article-autosave:${articleId || "new"}`;
+}
+
+function formatLastSavedStamp(value) {
+  if (!value && value !== 0) return "";
+  const stamp = formatDateTime(value);
+  return stamp === "—" ? "" : stamp;
+}
+
+function readStoredAutoSaveAt(articleId) {
+  try {
+    const raw = window.localStorage.getItem(autoSaveStorageKey(articleId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed?.at || null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveLastSavedStamp(initialData = {}) {
+  const id = initialData?._id || initialData?.id || "new";
+  const fromArticle =
+    initialData?.lastEditedAt ||
+    initialData?.updatedAt ||
+    initialData?.modifiedAt ||
+    null;
+  const fromStore = readStoredAutoSaveAt(id);
+  const fromNewStore = id !== "new" ? readStoredAutoSaveAt("new") : null;
+  const times = [fromArticle, fromStore, fromNewStore]
+    .filter(Boolean)
+    .map((v) => new Date(v).getTime())
+    .filter((n) => !Number.isNaN(n));
+  if (!times.length) return "";
+  return formatLastSavedStamp(Math.max(...times));
+}
+
+const EMPTY_SEO = {
+  focusKeyphrase: "",
+  metaTitle: "",
+  metaDescription: "",
+  metaKeywords: "",
+  canonicalUrl: "",
+  featuredAlt: "",
+  noIndex: false,
+};
+
+function articleBodyHtml(content, excerpt) {
+  const html = String(content || "").trim();
+  if (html && html !== "<p></p>" && html !== "<p><br></p>") return html;
+  if (excerpt) return `<p>${excerpt}</p>`;
+  return "";
+}
 
 function FieldLabel({ children, hint }) {
   return (
@@ -15,39 +76,56 @@ function FieldLabel({ children, hint }) {
   );
 }
 
+const AUTOSAVE_MS = 2 * 60 * 1000;
+
 function ArticleForm({
   onSubmit,
+  onAutoSave,
   initialData = {},
   submitText = "Save Article",
 }) {
   const [title, setTitle] = useState("");
+  const [slug, setSlug] = useState("");
+  const [slugTouched, setSlugTouched] = useState(false);
   const [category, setCategory] = useState("");
   const [selectedTags, setSelectedTags] = useState([]);
   const [featured, setFeatured] = useState(false);
   const [breaking, setBreaking] = useState(false);
   const [trending, setTrending] = useState(false);
   const [dontMiss, setDontMiss] = useState(false);
+  const [explainer, setExplainer] = useState(false);
   const [content, setContent] = useState("");
   const [excerpt, setExcerpt] = useState("");
-  const [status, setStatus] = useState("draft");
+  const [status, setStatus] = useState("published");
   const [featuredImage, setFeaturedImage] = useState(null);
   const [previewImage, setPreviewImage] = useState("");
   const [categories, setCategories] = useState([]);
   const [tags, setTags] = useState([]);
-  const [showSeo, setShowSeo] = useState(false);
-  const [seo, setSeo] = useState({
-    metaTitle: "",
-    metaDescription: "",
-    metaKeywords: "",
-    canonicalUrl: "",
-    noIndex: false,
-  });
+  const [tagQuery, setTagQuery] = useState("");
+  const [creatingTag, setCreatingTag] = useState(false);
+  const [seo, setSeo] = useState(EMPTY_SEO);
   const [saving, setSaving] = useState(false);
   const [hydrated, setHydrated] = useState(false);
+  const [viewing, setViewing] = useState(false);
+  const [alsoReadMode, setAlsoReadMode] = useState("auto");
+  const [alsoReadId, setAlsoReadId] = useState("");
+  const [authors, setAuthors] = useState([]);
+  const [authorId, setAuthorId] = useState("");
+  const [autoSaving, setAutoSaving] = useState(false);
+  const [autoSaveNote, setAutoSaveNote] = useState("");
+  const viewRef = useRef(null);
+  const dirtyRef = useRef(false);
+  const autoSavingRef = useRef(false);
+  const snapshotRef = useRef("");
+  const savingRef = useRef(false);
+  const stateRef = useRef({});
 
   useEffect(() => {
     fetchCategories();
     fetchTags();
+    getAuthors()
+      .then((list) => setAuthors(Array.isArray(list) ? list : []))
+      .catch(() => setAuthors([]));
   }, []);
 
   useEffect(() => {
@@ -55,13 +133,26 @@ function ArticleForm({
     if (!initialData._id && !initialData.title) return;
 
     setTitle(initialData.title || "");
+    setSlug(initialData.slug || toSlug(initialData.title || "") || "");
+    setSlugTouched(Boolean(initialData.slug));
     setExcerpt(initialData.excerpt || initialData.summary || "");
     setContent(initialData.content || "");
     setFeatured(Boolean(initialData.isFeatured));
     setBreaking(Boolean(initialData.isBreaking));
     setTrending(Boolean(initialData.isTrending));
     setDontMiss(Boolean(initialData.isDontMiss));
-    setStatus(initialData.status || "draft");
+    setExplainer(Boolean(initialData.isExplainer));
+    setStatus(
+      initialData.status === "pending" || !initialData.status
+        ? "published"
+        : initialData.status
+    );
+    setAlsoReadMode(initialData.alsoReadMode || "auto");
+    setAlsoReadId(
+      initialData.alsoReadMode === "custom"
+        ? initialData.alsoRead?._id || initialData.alsoRead || ""
+        : ""
+    );
 
     if (initialData.category) {
       setCategory(
@@ -71,30 +162,40 @@ function ArticleForm({
       );
     }
 
+    if (initialData.author) {
+      setAuthorId(
+        String(
+          typeof initialData.author === "object"
+            ? initialData.author._id || initialData.author.id || ""
+            : initialData.author
+        )
+      );
+    }
+
     if (Array.isArray(initialData.tags)) {
       setSelectedTags(
         initialData.tags.map((t) =>
-          typeof t === "object" ? t._id : t
+          String(typeof t === "object" ? t._id : t)
         )
       );
     }
 
     if (initialData.seo) {
       setSeo({
-        metaTitle: initialData.seo.metaTitle || "",
-        metaDescription: initialData.seo.metaDescription || "",
+        focusKeyphrase: initialData.seo.focusKeyphrase || "",
+        metaTitle: String(initialData.seo.metaTitle || "").slice(0, 70),
+        metaDescription: String(initialData.seo.metaDescription || "").slice(
+          0,
+          160
+        ),
         metaKeywords: Array.isArray(initialData.seo.metaKeywords)
           ? initialData.seo.metaKeywords.join(", ")
           : initialData.seo.metaKeywords || "",
         canonicalUrl: initialData.seo.canonicalUrl || "",
+        featuredAlt:
+          initialData.seo.featuredAlt || initialData.featuredImageAlt || "",
         noIndex: Boolean(initialData.seo.noIndex),
       });
-      if (
-        initialData.seo.metaTitle ||
-        initialData.seo.metaDescription
-      ) {
-        setShowSeo(true);
-      }
     }
 
     if (initialData.featuredImage) {
@@ -108,8 +209,17 @@ function ArticleForm({
       setPreviewImage(imageUrl);
     }
 
+    const lastSaved = resolveLastSavedStamp(initialData);
+    if (lastSaved) setAutoSaveNote(lastSaved);
+
     setHydrated(true);
   }, [initialData, hydrated]);
+
+  useEffect(() => {
+    if (autoSaveNote) return;
+    const lastSaved = resolveLastSavedStamp(initialData || {});
+    if (lastSaved) setAutoSaveNote(lastSaved);
+  }, [initialData?._id, initialData?.id, autoSaveNote]);
 
   const fetchCategories = async () => {
     try {
@@ -134,10 +244,266 @@ function ArticleForm({
   };
 
   const toggleTag = (id) => {
+    const key = String(id);
     setSelectedTags((prev) =>
-      prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]
+      prev.map(String).includes(key)
+        ? prev.filter((t) => String(t) !== key)
+        : [...prev, key]
     );
   };
+
+  const articleTagObjects = Array.isArray(initialData?.tags)
+    ? initialData.tags.filter((t) => t && typeof t === "object")
+    : [];
+
+  const selectedTagObjects = selectedTags
+    .map(
+      (id) =>
+        tags.find((t) => String(t._id) === String(id)) ||
+        articleTagObjects.find((t) => String(t._id) === String(id))
+    )
+    .filter(Boolean);
+
+  const tagQueryTrimmed = tagQuery.trim();
+  const exactTagMatch = tags.find(
+    (t) =>
+      String(t.name || "").toLowerCase() === tagQueryTrimmed.toLowerCase()
+  );
+  const canCreateTag =
+    Boolean(tagQueryTrimmed) &&
+    !exactTagMatch &&
+    !creatingTag;
+
+  const tagMatches = (() => {
+    const q = tagQueryTrimmed.toLowerCase();
+    const selected = new Set(selectedTags.map(String));
+    const pool = tags.filter((t) => !selected.has(String(t._id)));
+    const list = q
+      ? pool.filter((t) => String(t.name || "").toLowerCase().includes(q))
+      : pool;
+    return list.slice(0, 60);
+  })();
+
+  const handleCreateTag = async () => {
+    const name = tagQuery.trim();
+    if (!name || creatingTag) return;
+
+    const existing = tags.find(
+      (t) => String(t.name || "").toLowerCase() === name.toLowerCase()
+    );
+    if (existing) {
+      toggleTag(existing._id);
+      setTagQuery("");
+      return;
+    }
+
+    try {
+      setCreatingTag(true);
+      const res = await createTag({ name });
+      const created =
+        res?.data?.data || res?.data?.tag || res?.data || res?.tag || res;
+      const tag =
+        created && typeof created === "object" && created._id
+          ? created
+          : null;
+      if (!tag?._id) {
+        throw new Error("Tag was created but no id was returned");
+      }
+
+      setTags((prev) => {
+        if (prev.some((t) => String(t._id) === String(tag._id))) return prev;
+        return [...prev, tag].sort((a, b) =>
+          String(a.name || "").localeCompare(String(b.name || ""))
+        );
+      });
+      setSelectedTags((prev) =>
+        prev.map(String).includes(String(tag._id))
+          ? prev
+          : [...prev, String(tag._id)]
+      );
+      setTagQuery("");
+    } catch (error) {
+      console.error(error);
+      alert(
+        error?.response?.data?.message ||
+          error?.message ||
+          "Failed to create tag"
+      );
+    } finally {
+      setCreatingTag(false);
+    }
+  };
+
+  const buildFormDataFrom = (
+    state,
+    { forceDraft = false, includeImage = true } = {}
+  ) => {
+    const formData = new FormData();
+    const safeTitle =
+      String(state.title || "").trim() ||
+      `Untitled draft ${new Date().toLocaleString("en-IN", {
+        day: "2-digit",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+      })}`;
+    formData.append("title", safeTitle);
+    formData.append(
+      "slug",
+      (String(state.slug || "").trim() || toSlug(safeTitle)).trim()
+    );
+    if (state.category) formData.append("category", state.category);
+    formData.append("excerpt", String(state.excerpt || "").trim());
+    formData.append("status", forceDraft ? "draft" : state.status);
+    formData.append("isFeatured", String(Boolean(state.featured)));
+    formData.append("isBreaking", String(Boolean(state.breaking)));
+    formData.append("isTrending", String(Boolean(state.trending)));
+    formData.append("isDontMiss", String(Boolean(state.dontMiss)));
+    formData.append("isExplainer", String(Boolean(state.explainer)));
+    formData.append(
+      "alsoRead",
+      state.alsoReadMode === "custom"
+        ? state.alsoReadId || "auto"
+        : state.alsoReadMode || "auto"
+    );
+    formData.append("content", state.content || "");
+    formData.append("tags", JSON.stringify(state.selectedTags || []));
+    if (state.authorId) {
+      formData.append("authorId", state.authorId);
+      formData.append("author", state.authorId);
+    }
+    const seoState = state.seo || EMPTY_SEO;
+    formData.append(
+      "seo",
+      JSON.stringify({
+        focusKeyphrase: String(seoState.focusKeyphrase || "").trim(),
+        metaTitle: String(seoState.metaTitle || "").trim().slice(0, 70),
+        metaDescription: String(seoState.metaDescription || "")
+          .trim()
+          .slice(0, 160),
+        metaKeywords: String(seoState.metaKeywords || "")
+          .split(",")
+          .map((k) => k.trim())
+          .filter(Boolean),
+        canonicalUrl: String(seoState.canonicalUrl || "").trim(),
+        featuredAlt: String(seoState.featuredAlt || "").trim(),
+        noIndex: Boolean(seoState.noIndex),
+      })
+    );
+    if (includeImage && state.featuredImage) {
+      formData.append("featuredImage", state.featuredImage);
+    }
+    return formData;
+  };
+
+  useEffect(() => {
+    savingRef.current = saving;
+  }, [saving]);
+
+  useEffect(() => {
+    const next = {
+      title,
+      slug,
+      category,
+      selectedTags,
+      featured,
+      breaking,
+      trending,
+      dontMiss,
+      explainer,
+      content,
+      excerpt,
+      status,
+      alsoReadMode,
+      alsoReadId,
+      authorId,
+      seo,
+      featuredImage,
+      previewImage,
+      articleId: initialData?._id || initialData?.id || "",
+    };
+    const fingerprint = JSON.stringify({
+      ...next,
+      featuredImage: Boolean(featuredImage),
+    });
+    stateRef.current = { ...next, fingerprint };
+    if (!snapshotRef.current) {
+      snapshotRef.current = fingerprint;
+      return;
+    }
+    if (fingerprint !== snapshotRef.current) dirtyRef.current = true;
+  }, [
+    title,
+    slug,
+    category,
+    selectedTags,
+    featured,
+    breaking,
+    trending,
+    dontMiss,
+    explainer,
+    content,
+    excerpt,
+    status,
+    alsoReadMode,
+    alsoReadId,
+    authorId,
+    seo,
+    featuredImage,
+    previewImage,
+    initialData?._id,
+    initialData?.id,
+  ]);
+
+  useEffect(() => {
+    if (typeof onAutoSave !== "function") return undefined;
+
+    const runAutoSave = async () => {
+      if (autoSavingRef.current || savingRef.current) return;
+      const state = stateRef.current || {};
+      const body = String(state.content || "").trim();
+      const hasWork =
+        Boolean(String(state.title || "").trim()) ||
+        Boolean(String(state.excerpt || "").trim()) ||
+        (Boolean(body) && body !== "<p></p>" && body !== "<p><br></p>");
+      if (!hasWork) return;
+      if (!dirtyRef.current && state.articleId) return;
+
+      autoSavingRef.current = true;
+      setAutoSaving(true);
+      try {
+        const savedAt = Date.now();
+        try {
+          window.localStorage.setItem(
+            autoSaveStorageKey(state.articleId),
+            JSON.stringify({ at: savedAt, ...state, featuredImage: null })
+          );
+        } catch {
+          /* ignore */
+        }
+
+        const isNew = !state.articleId;
+        const formData = buildFormDataFrom(state, {
+          forceDraft: isNew,
+          includeImage: Boolean(state.featuredImage),
+        });
+        await onAutoSave(formData, { isNew });
+        dirtyRef.current = false;
+        snapshotRef.current = state.fingerprint;
+        if (state.featuredImage) setFeaturedImage(null);
+        setAutoSaveNote(formatLastSavedStamp(savedAt));
+      } catch (error) {
+        console.error(error);
+        setAutoSaveNote(`failed · ${formatLastSavedStamp(Date.now())}`);
+      } finally {
+        autoSavingRef.current = false;
+        setAutoSaving(false);
+      }
+    };
+
+    const timer = window.setInterval(runAutoSave, AUTOSAVE_MS);
+    return () => window.clearInterval(timer);
+  }, [onAutoSave]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -155,49 +521,101 @@ function ArticleForm({
       return;
     }
 
-    const formData = new FormData();
-    formData.append("title", title.trim());
-    formData.append("category", category);
-    formData.append("excerpt", excerpt.trim());
-    formData.append("status", status);
-    formData.append("isFeatured", String(featured));
-    formData.append("isBreaking", String(breaking));
-    formData.append("isTrending", String(trending));
-    formData.append("isDontMiss", String(dontMiss));
-    formData.append("content", content);
-    formData.append("tags", JSON.stringify(selectedTags));
-    formData.append(
-      "seo",
-      JSON.stringify({
-        metaTitle: seo.metaTitle.trim() || undefined,
-        metaDescription: seo.metaDescription.trim() || undefined,
-        metaKeywords: seo.metaKeywords
-          .split(",")
-          .map((k) => k.trim())
-          .filter(Boolean),
-        canonicalUrl: seo.canonicalUrl.trim() || undefined,
-        noIndex: seo.noIndex,
-      })
-    );
-
-    if (featuredImage) {
-      formData.append("featuredImage", featuredImage);
-    }
+    const formData = buildFormDataFrom(stateRef.current, {
+      forceDraft: false,
+      includeImage: true,
+    });
 
     try {
       setSaving(true);
       await onSubmit(formData);
+      dirtyRef.current = false;
+      snapshotRef.current = stateRef.current?.fingerprint || "";
+      const savedAt = Date.now();
+      setAutoSaveNote(formatLastSavedStamp(savedAt));
+      try {
+        const id = initialData?._id || initialData?.id || "new";
+        window.localStorage.setItem(
+          autoSaveStorageKey(id),
+          JSON.stringify({ at: savedAt })
+        );
+      } catch {
+        /* ignore */
+      }
     } finally {
       setSaving(false);
     }
   };
 
+  const categoryName =
+    categories.find((cat) => String(cat._id) === String(category))?.name ||
+    categories.find((cat) => String(cat._id) === String(category))?.label ||
+    "";
+  const bodyHtml = articleBodyHtml(content, excerpt);
+
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      {viewing ? (
+        <section
+          ref={viewRef}
+          className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden"
+        >
+          <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-3 border-b border-slate-200 bg-slate-50">
+            <p className="text-sm font-semibold text-ink">Article view</p>
+            <button
+              type="button"
+              onClick={() => setViewing(false)}
+              className="cms-btn-ghost text-xs py-1.5 inline-flex items-center gap-1.5"
+            >
+              <X size={14} />
+              Close
+            </button>
+          </div>
+          {previewImage ? (
+            <img
+              src={previewImage}
+              alt={title || "Featured image"}
+              className="w-full max-h-[360px] object-cover bg-slate-100"
+            />
+          ) : null}
+          <div className="p-4 sm:p-6 md:p-8">
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              {categoryName ? (
+                <span className="text-[11px] font-bold uppercase tracking-wide text-accent">
+                  {categoryName}
+                </span>
+              ) : null}
+              <span className="text-[10px] font-bold uppercase bg-ink/5 text-ink px-2 py-0.5 rounded-full">
+                {status || "draft"}
+              </span>
+            </div>
+            <h1 className="font-display text-3xl font-bold text-ink mb-3">
+              {title.trim() || "Untitled article"}
+            </h1>
+            {excerpt ? (
+              <p className="text-base text-ink-muted mb-4 leading-relaxed">
+                {excerpt}
+              </p>
+            ) : null}
+            {bodyHtml ? (
+              <div
+                className="prose prose-lg max-w-none text-ink [&_img]:rounded-lg [&_img]:w-full [&_img]:h-auto"
+                dangerouslySetInnerHTML={{ __html: bodyHtml }}
+              />
+            ) : (
+              <p className="text-sm text-ink-muted">
+                No article body yet. Write in the editor below, then click View
+                again.
+              </p>
+            )}
+          </div>
+        </section>
+      ) : null}
+
       <div className="grid xl:grid-cols-12 gap-6">
         {/* Main column */}
         <div className="xl:col-span-8 space-y-6">
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 md:p-6 space-y-5">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-5 md:p-6 space-y-5">
             <div>
               <FieldLabel>Headline</FieldLabel>
               <input
@@ -205,7 +623,11 @@ function ArticleForm({
                 placeholder="Write a clear, compelling headline"
                 className="w-full border border-slate-200 rounded-lg p-3.5 text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"
                 value={title}
-                onChange={(e) => setTitle(e.target.value)}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setTitle(next);
+                  if (!slugTouched) setSlug(toSlug(next));
+                }}
               />
             </div>
 
@@ -227,7 +649,7 @@ function ArticleForm({
             </div>
           </div>
 
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 md:p-6">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-5 md:p-6">
             <div className="flex items-center justify-between mb-3">
               <FieldLabel>Article body</FieldLabel>
               <span className="text-xs text-slate-400">
@@ -237,88 +659,36 @@ function ArticleForm({
             <ArticleEditor content={content} setContent={setContent} />
           </div>
 
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
-            <button
-              type="button"
-              onClick={() => setShowSeo((v) => !v)}
-              className="w-full flex items-center justify-between px-5 md:px-6 py-4 text-left"
-            >
-              <div>
-                <p className="font-semibold text-slate-800">SEO settings</p>
-                <p className="text-sm text-slate-500">
-                  Meta title, description and indexing
-                </p>
-              </div>
-              <span className="text-slate-400 text-sm">
-                {showSeo ? "Hide" : "Show"}
-              </span>
-            </button>
+          <AlsoReadPicker
+            articleId={initialData?._id || initialData?.id || ""}
+            categoryId={category}
+            mode={alsoReadMode}
+            selectedId={alsoReadId}
+            initialOptions={initialData?.alsoReadOptions || []}
+            initialSelected={initialData?.alsoRead || null}
+            onChange={({ mode: nextMode, id }) => {
+              setAlsoReadMode(nextMode);
+              setAlsoReadId(id || "");
+            }}
+          />
 
-            {showSeo ? (
-              <div className="px-5 md:px-6 pb-6 space-y-4 border-t border-slate-100 pt-4">
-                <div>
-                  <FieldLabel hint="≤ 70 chars">Meta title</FieldLabel>
-                  <input
-                    className="w-full border border-slate-200 rounded-lg p-3"
-                    value={seo.metaTitle}
-                    maxLength={70}
-                    onChange={(e) =>
-                      setSeo((s) => ({ ...s, metaTitle: e.target.value }))
-                    }
-                    placeholder="Defaults to article title if empty"
-                  />
-                </div>
-                <div>
-                  <FieldLabel hint="≤ 160 chars">Meta description</FieldLabel>
-                  <textarea
-                    rows={3}
-                    maxLength={160}
-                    className="w-full border border-slate-200 rounded-lg p-3"
-                    value={seo.metaDescription}
-                    onChange={(e) =>
-                      setSeo((s) => ({
-                        ...s,
-                        metaDescription: e.target.value,
-                      }))
-                    }
-                    placeholder="Search engine snippet"
-                  />
-                </div>
-                <div>
-                  <FieldLabel hint="comma separated">Keywords</FieldLabel>
-                  <input
-                    className="w-full border border-slate-200 rounded-lg p-3"
-                    value={seo.metaKeywords}
-                    onChange={(e) =>
-                      setSeo((s) => ({ ...s, metaKeywords: e.target.value }))
-                    }
-                    placeholder="odisha, politics, business"
-                  />
-                </div>
-                <div>
-                  <FieldLabel>Canonical URL</FieldLabel>
-                  <input
-                    className="w-full border border-slate-200 rounded-lg p-3"
-                    value={seo.canonicalUrl}
-                    onChange={(e) =>
-                      setSeo((s) => ({ ...s, canonicalUrl: e.target.value }))
-                    }
-                    placeholder="https://"
-                  />
-                </div>
-                <label className="flex items-center gap-2 text-sm text-slate-700">
-                  <input
-                    type="checkbox"
-                    checked={seo.noIndex}
-                    onChange={(e) =>
-                      setSeo((s) => ({ ...s, noIndex: e.target.checked }))
-                    }
-                  />
-                  No-index this article (hide from search engines)
-                </label>
-              </div>
-            ) : null}
-          </div>
+          <SeoPanel
+            seo={seo}
+            onChange={setSeo}
+            title={title}
+            content={content}
+            excerpt={excerpt}
+            slug={slug}
+            onSlugChange={(value) => {
+              setSlugTouched(true);
+              setSlug(value);
+            }}
+            categorySlug={
+              categories.find((cat) => String(cat._id) === String(category))
+                ?.slug || "news"
+            }
+            featuredImage={previewImage}
+          />
         </div>
 
         {/* Sidebar */}
@@ -332,10 +702,62 @@ function ArticleForm({
                 onChange={(e) => setStatus(e.target.value)}
               >
                 <option value="draft">Draft</option>
-                <option value="pending">Pending review</option>
                 <option value="published">Published</option>
                 <option value="archived">Archived</option>
               </select>
+            </div>
+
+            <div>
+              <FieldLabel hint="Shown on the public article page">
+                Display author
+              </FieldLabel>
+              <select
+                className="w-full border border-slate-200 rounded-lg p-3 bg-white"
+                value={authorId}
+                onChange={(e) => setAuthorId(e.target.value)}
+              >
+                <option value="">
+                  {initialData?.author?.name
+                    ? `Current: ${initialData.author.name}`
+                    : "Select author"}
+                </option>
+                {(() => {
+                  const options = [...authors];
+                  const currentId = String(
+                    initialData?.author?._id ||
+                      initialData?.author?.id ||
+                      authorId ||
+                      ""
+                  );
+                  if (
+                    currentId &&
+                    !options.some(
+                      (person) =>
+                        String(person._id || person.id) === currentId
+                    )
+                  ) {
+                    options.unshift({
+                      _id: currentId,
+                      name:
+                        initialData?.author?.name ||
+                        `Author ${currentId}`,
+                    });
+                  }
+                  return options.map((person) => {
+                    const id = String(person._id || person.id || "");
+                    if (!id) return null;
+                    return (
+                      <option key={id} value={id}>
+                        {person.name || person.email || `Author ${id}`}
+                      </option>
+                    );
+                  });
+                })()}
+              </select>
+              <p className="mt-1.5 text-xs text-slate-400">
+                Change this to credit a different author on the article details
+                page.
+              </p>
             </div>
 
             <div>
@@ -355,32 +777,102 @@ function ArticleForm({
             </div>
 
             <div>
-              <FieldLabel>Tags</FieldLabel>
-              {tags.length === 0 ? (
-                <p className="text-sm text-slate-400">
-                  No tags yet. Create tags from the Tags page.
-                </p>
-              ) : (
-                <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto p-1">
-                  {tags.map((tag) => {
-                    const active = selectedTags.includes(tag._id);
-                    return (
+              <FieldLabel hint="Search existing or create new">Tags</FieldLabel>
+              <div className="space-y-2">
+                {selectedTagObjects.length ? (
+                  <div className="flex flex-wrap gap-2">
+                    {selectedTagObjects.map((tag) => (
                       <button
                         key={tag._id}
                         type="button"
                         onClick={() => toggleTag(tag._id)}
-                        className={`px-3 py-1.5 rounded-full text-sm border transition ${
-                          active
-                            ? "bg-blue-600 text-white border-blue-600"
-                            : "bg-slate-50 text-slate-700 border-slate-200 hover:border-blue-300"
-                        }`}
+                        className="px-3 py-1.5 rounded-full text-sm border bg-blue-600 text-white border-blue-600"
+                        title="Remove tag"
                       >
-                        {tag.name}
+                        {tag.name} ×
                       </button>
-                    );
-                  })}
+                    ))}
+                  </div>
+                ) : null}
+
+                <div className="flex gap-2">
+                  <input
+                    value={tagQuery}
+                    onChange={(e) => setTagQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        if (exactTagMatch) {
+                          toggleTag(exactTagMatch._id);
+                          setTagQuery("");
+                        } else if (canCreateTag) {
+                          handleCreateTag();
+                        }
+                      }
+                    }}
+                    placeholder={
+                      tags.length
+                        ? `Search or create tags (${tags.length})…`
+                        : "Type a new tag name…"
+                    }
+                    className="w-full border border-slate-200 rounded-lg p-2.5 text-sm bg-white"
+                  />
+                  <button
+                    type="button"
+                    disabled={!canCreateTag && !exactTagMatch}
+                    onClick={() => {
+                      if (exactTagMatch) {
+                        toggleTag(exactTagMatch._id);
+                        setTagQuery("");
+                        return;
+                      }
+                      handleCreateTag();
+                    }}
+                    className="shrink-0 px-3 py-2 rounded-lg text-sm font-semibold border border-slate-200 bg-white text-slate-800 hover:bg-slate-50 disabled:opacity-40 disabled:pointer-events-none"
+                  >
+                    {creatingTag
+                      ? "Adding…"
+                      : exactTagMatch
+                        ? "Add"
+                        : "Create"}
+                  </button>
                 </div>
-              )}
+
+                {canCreateTag ? (
+                  <button
+                    type="button"
+                    onClick={handleCreateTag}
+                    className="text-sm font-semibold text-accent hover:underline"
+                  >
+                    Create new tag “{tagQueryTrimmed}” and add it
+                  </button>
+                ) : null}
+
+                {tags.length === 0 && !tagQueryTrimmed ? (
+                  <p className="text-sm text-slate-400">
+                    No tags yet. Type a name above and click Create.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto p-1">
+                    {tagMatches.length ? (
+                      tagMatches.map((tag) => (
+                        <button
+                          key={tag._id}
+                          type="button"
+                          onClick={() => toggleTag(tag._id)}
+                          className="px-3 py-1.5 rounded-full text-sm border transition bg-slate-50 text-slate-700 border-slate-200 hover:border-blue-300"
+                        >
+                          {tag.name}
+                        </button>
+                      ))
+                    ) : tagQueryTrimmed && !canCreateTag ? (
+                      <p className="text-sm text-slate-400">
+                        Tag already selected or no matches.
+                      </p>
+                    ) : null}
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="space-y-3 pt-2 border-t border-slate-100">
@@ -404,7 +896,7 @@ function ArticleForm({
                     Featured (sticky)
                   </span>
                   <span className="block text-xs text-slate-500">
-                    Optional WordPress sticky flag
+                    Pins the story in Top News
                   </span>
                 </span>
               </label>
@@ -435,6 +927,21 @@ function ArticleForm({
                   <span className="font-medium text-slate-800">Don't Miss</span>
                   <span className="block text-xs text-slate-500">
                     Shows in Don't Miss picks
+                  </span>
+                </span>
+              </label>
+
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={explainer}
+                  onChange={(e) => setExplainer(e.target.checked)}
+                />
+                <span>
+                  <span className="font-medium text-slate-800">Explainer</span>
+                  <span className="block text-xs text-slate-500">
+                    Shows in the homepage Explainer section
                   </span>
                 </span>
               </label>
@@ -484,13 +991,55 @@ function ArticleForm({
               )}
             </div>
 
+            {(initialData?._id || initialData?.id) &&
+            (status === "published" || status === "publish") ? (
+              <button
+                type="button"
+                onClick={() =>
+                  openPublicArticle(
+                    {
+                      ...initialData,
+                      slug: slug || initialData.slug,
+                      category:
+                        categories.find(
+                          (cat) => String(cat._id) === String(category)
+                        ) || initialData.category,
+                    },
+                    "admin"
+                  )
+                }
+                className="w-full inline-flex items-center justify-center gap-2 border border-slate-300 bg-white hover:bg-slate-50 text-ink font-semibold px-6 py-3 rounded-lg transition"
+              >
+                <Eye size={18} />
+                View
+              </button>
+            ) : null}
             <button
               type="submit"
-              disabled={saving}
+              disabled={saving || autoSaving}
               className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-semibold px-6 py-3 rounded-lg transition"
             >
               {saving ? "Saving…" : submitText}
             </button>
+            {typeof onAutoSave === "function" ? (
+              <div className="flex items-center justify-center gap-2 text-xs text-slate-600">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-700">
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${
+                      autoSaving ? "animate-pulse bg-amber-500" : "bg-emerald-500"
+                    }`}
+                  />
+                  Auto save
+                </span>
+                <span className="text-slate-500">
+                  {autoSaving
+                    ? "Saving…"
+                    : autoSaveNote
+                      ? `Last saved ${autoSaveNote}`
+                      : "Waiting for first save"}
+                </span>
+              </div>
+            ) : null}
           </div>
         </aside>
       </div>
